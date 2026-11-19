@@ -6,6 +6,7 @@ BAUDRATE = 115200
 FRAME_LEN = 24
 FRAME_HEAD = 0x7B
 FRAME_TAIL = 0x7D
+BATTERY_UNITS_PER_VOLT = 10.0
 
 
 def signed_int16_be(frame, offset):
@@ -46,7 +47,10 @@ def decode_frame(frame):
         "wz_rad_s": signed_int16_be(frame, 6) / 1000.0,
         "accel_m_s2": accel,
         "gyro_rad_s": gyro,
-        "battery_v": unsigned_int16_be(frame, 20) / 1000.0,
+        # The captured value 0x006B is 107; the car panel reads about 10.7 V.
+        # This observed firmware therefore appears to encode battery voltage
+        # in 0.1 V units, despite the manual's different example scale.
+        "battery_v": unsigned_int16_be(frame, 20) / BATTERY_UNITS_PER_VOLT,
     }
 
 
