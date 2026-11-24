@@ -57,6 +57,9 @@ echo "安装 Python 依赖..."
 
 SDK_CACHE="$SCRIPT_DIR/.sdk_cache"
 SDK_ZIP="$SDK_CACHE/Orbbec_OpenNI_v2.3.0.86-beta6_linux_release.zip"
+ARM64_ZIP="$SDK_CACHE/$ARM64_ZIP_NAME"
+RELEASE_DIR="$SDK_CACHE/release_contents"
+SDK_DIR="$SDK_CACHE/arm64_sdk"
 mkdir -p "$SDK_CACHE"
 if [[ ! -s "$SDK_ZIP" ]] || ! unzip -tq "$SDK_ZIP" >/dev/null 2>&1; then
     echo "下载 Orbbec OpenNI SDK..."
@@ -70,23 +73,28 @@ if [[ ! -s "$SDK_ZIP" ]] || ! unzip -tq "$SDK_ZIP" >/dev/null 2>&1; then
     mv -f "$DOWNLOAD_TMP" "$SDK_ZIP"
 fi
 
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "$WORK_DIR"' EXIT
-RELEASE_DIR="$WORK_DIR/release"
-SDK_DIR="$WORK_DIR/arm64_sdk"
-mkdir -p "$RELEASE_DIR" "$SDK_DIR"
+if [[ ! -s "$ARM64_ZIP" ]] || ! unzip -tq "$ARM64_ZIP" >/dev/null 2>&1; then
+    echo "从外层压缩包提取 ARM64 SDK 包..."
+    mkdir -p "$RELEASE_DIR"
+    unzip -oq "$SDK_ZIP" -d "$RELEASE_DIR"
+    RELEASE_ARM64_ZIP="$(find "$RELEASE_DIR" -type f -name "$ARM64_ZIP_NAME" -print -quit)"
+    [[ -n "$RELEASE_ARM64_ZIP" ]] || die \
+        "外层 ZIP 中未找到预期的 ARM64 包：$ARM64_ZIP_NAME"
+    cp -f "$RELEASE_ARM64_ZIP" "$ARM64_ZIP"
+fi
 
-echo "解压外层 SDK 发布包..."
-unzip -q "$SDK_ZIP" -d "$RELEASE_DIR"
-ARM64_ZIP="$(find "$RELEASE_DIR" -type f -name "$ARM64_ZIP_NAME" -print -quit)"
-[[ -n "$ARM64_ZIP" ]] || die \
-    "外层 ZIP 中未找到预期的 ARM64 包：$ARM64_ZIP_NAME"
-
-echo "解压 ARM64 SDK：$ARM64_ZIP_NAME"
-unzip -q "$ARM64_ZIP" -d "$SDK_DIR"
+mkdir -p "$SDK_DIR"
+SDK_INSTALL_SCRIPT="$(find "$SDK_DIR" -type f -name install.sh -print -quit)"
+SDK_BUNDLE_LIBRARY="$(find "$SDK_DIR" \( -type f -o -type l \) \
+    -name 'libOpenNI2.so*' -print -quit)"
+SDK_BUNDLE_DRIVER="$(find "$SDK_DIR" -type d -path '*/OpenNI2/Drivers' -print -quit)"
+if [[ -z "$SDK_INSTALL_SCRIPT" || -z "$SDK_BUNDLE_LIBRARY" || -z "$SDK_BUNDLE_DRIVER" ]]; then
+    echo "解压 ARM64 SDK（保留在 $SDK_DIR）..."
+    unzip -oq "$ARM64_ZIP" -d "$SDK_DIR"
+fi
 INSTALL_SCRIPT="$(find "$SDK_DIR" -type f -name install.sh -print -quit)"
 [[ -n "$INSTALL_SCRIPT" ]] || die \
-    "ARM64 SDK 压缩包内未找到 install.sh，请检查下载包是否完整。"
+    "ARM64 SDK 压缩包内未找到 install.sh。压缩包已保留在 $ARM64_ZIP，请检查下载包是否正确。"
 
 INSTALL_DIR="$(dirname -- "$INSTALL_SCRIPT")"
 echo "安装 OpenNI SDK..."
@@ -99,7 +107,8 @@ sudo ldconfig
 sudo udevadm control --reload-rules || true
 sudo udevadm trigger || true
 
-HEADER="$(find /usr/include "$SDK_DIR" -type f -name OpenNI.h -print -quit 2>/dev/null || true)"
+HEADER="$(find /usr/include /usr/local/include "$SDK_DIR" \
+    -type f -name OpenNI.h -print -quit 2>/dev/null || true)"
 [[ -n "$HEADER" ]] || die "SDK 安装后找不到 OpenNI.h。"
 INCLUDE_DIR="$(dirname -- "$HEADER")"
 
@@ -111,16 +120,17 @@ while IFS= read -r -d '' candidate; do
         LIBRARY="$candidate"
         break
     fi
-done < <(find /usr/lib /usr/local/lib "$SDK_DIR" \
+done < <(find "$SDK_DIR" /usr/lib /usr/local/lib \
     \( -type f -o -type l \) -name 'libOpenNI2.so*' -print0 2>/dev/null)
 [[ -n "$LIBRARY" ]] || die \
-    "未找到 ARM64 版 libOpenNI2.so；请确认 ARM64 SDK 的 install.sh 安装成功。"
+    "在 SDK 解压目录 $SDK_DIR 和系统库目录中均未找到 ARM64 版 libOpenNI2.so。"
 LIB_DIR="$(dirname -- "$(realpath -- "$LIBRARY")")"
 
-DRIVER_DIR="$(find /usr/lib /usr/local/lib -type d -path '*/OpenNI2/Drivers' \
+DRIVER_DIR="$(find "$SDK_DIR" /usr/lib /usr/local/lib \
+    -type d -path '*/OpenNI2/Drivers' \
     -print -quit 2>/dev/null || true)"
 [[ -n "$DRIVER_DIR" ]] || die \
-    "SDK 安装后找不到 OpenNI2/Drivers 插件目录。"
+    "在 SDK 解压目录 $SDK_DIR 和系统目录中均找不到 OpenNI2/Drivers。请检查 SDK 压缩包内容。"
 OPENNI2_REDIST="$(dirname -- "$(dirname -- "$DRIVER_DIR")")"
 
 BIN_DIR="$HOME/.local/bin"
