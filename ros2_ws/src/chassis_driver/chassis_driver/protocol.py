@@ -57,7 +57,7 @@ def decode_frame(frame: bytes) -> FeedbackFrame:
         vy_m_s=_signed_int16_be(frame, 4) / 1000.0,
         wz_rad_s=_signed_int16_be(frame, 6) / 1000.0,
         accel_m_s2=tuple(_signed_int16_be(frame, i) / 1672.0 for i in (8, 10, 12)),
-        gyro_rad_s=tuple(_signed_int16_be(frame, i) / 3753.0 for i in (14, 16, 18)),
+        gyro_rad_s=tuple(_signed_int16_be(frame, i) / 3755.0 for i in (14, 16, 18)),
         battery_v=_unsigned_int16_be(frame, 20) / 1000.0,
     )
 

@@ -327,9 +327,9 @@ class ChassisDriverNode(Node):
                     now = time.monotonic()
                     if now >= next_command_time:
                         vx_m_s, wz_ros_rad_s, command_state = self._command_for_transmit(now)
-                        # The L150 controller defines positive Z rotation as clockwise;
-                        # ROS REP-103 defines positive angular.z as counter-clockwise.
-                        command = encode_command_frame(vx_m_s, 0.0, -wz_ros_rad_s)
+                        # The 2026 L150-C30D SE manual defines positive Z as
+                        # counter-clockwise, matching ROS REP-103 angular.z.
+                        command = encode_command_frame(vx_m_s, 0.0, wz_ros_rad_s)
                         written = port.write(command)
                         if written != len(command):
                             raise serial.SerialTimeoutException(
@@ -429,10 +429,9 @@ class ChassisDriverNode(Node):
         self._last_odom_monotonic = received.received_monotonic
 
         if dt is not None and 0.0 < dt <= self._max_integration_dt_sec:
-            # The L150 feedback uses clockwise-positive Z rotation; convert it
-            # into ROS's counter-clockwise-positive angular convention.
-            wz_ros_rad_s = -frame.wz_rad_s
-            delta_yaw = wz_ros_rad_s * dt
+            # The 2026 manual defines feedback Z rotation as counter-clockwise,
+            # matching ROS REP-103.
+            delta_yaw = frame.wz_rad_s * dt
             midpoint_yaw = self._yaw + delta_yaw * 0.5
             self._x += (
                 frame.vx_m_s * math.cos(midpoint_yaw)
@@ -470,7 +469,7 @@ class ChassisDriverNode(Node):
 
         message.twist.twist.linear.x = frame.vx_m_s
         message.twist.twist.linear.y = frame.vy_m_s
-        message.twist.twist.angular.z = -frame.wz_rad_s
+        message.twist.twist.angular.z = frame.wz_rad_s
         message.twist.covariance = self._planar_covariance(
             self._odom_twist_variance_xy, self._odom_twist_variance_wz
         )

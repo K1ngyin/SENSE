@@ -37,7 +37,7 @@ def decode_frame(frame):
 
     # IMU conversions follow the detailed MPU6050 examples in the manual.
     accel = tuple(signed_int16_be(frame, i) / 1672.0 for i in (8, 10, 12))
-    gyro = tuple(signed_int16_be(frame, i) / 3753.0 for i in (14, 16, 18))
+    gyro = tuple(signed_int16_be(frame, i) / 3755.0 for i in (14, 16, 18))
 
     return {
         "motor_flag": frame[1],
