@@ -16,8 +16,6 @@ astra_camera_node:
     color_info_topic: "/camera/color/camera_info"
     depth_topic: "/camera/depth/image_raw"
     depth_info_topic: "/camera/depth/camera_info"
-    aligned_depth_topic: "/camera/aligned_depth_to_color/image_raw"
-    aligned_depth_info_topic: "/camera/aligned_depth_to_color/camera_info"
 
     color_camera_info_url: ""
     depth_camera_info_url: ""

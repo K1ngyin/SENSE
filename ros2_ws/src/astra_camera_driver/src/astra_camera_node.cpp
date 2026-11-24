@@ -54,10 +54,6 @@ class AstraCameraNode final : public rclcpp::Node {
         "depth_topic", "/camera/depth/image_raw");
     const auto depth_info_topic = declare_parameter<std::string>(
         "depth_info_topic", "/camera/depth/camera_info");
-    const auto aligned_depth_topic = declare_parameter<std::string>(
-        "aligned_depth_topic", "/camera/aligned_depth_to_color/image_raw");
-    const auto aligned_depth_info_topic = declare_parameter<std::string>(
-        "aligned_depth_info_topic", "/camera/aligned_depth_to_color/camera_info");
     const auto color_info_url = declare_parameter<std::string>(
         "color_camera_info_url", "");
     const auto depth_info_url = declare_parameter<std::string>(
@@ -115,9 +111,6 @@ class AstraCameraNode final : public rclcpp::Node {
     color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(color_info_topic, qos);
     depth_pub_ = create_publisher<sensor_msgs::msg::Image>(depth_topic, qos);
     depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(depth_info_topic, qos);
-    aligned_depth_pub_ = create_publisher<sensor_msgs::msg::Image>(aligned_depth_topic, qos);
-    aligned_depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(aligned_depth_info_topic, qos);
-
     openOpenNI();
     openColorCamera();
     running_.store(true);
@@ -373,10 +366,6 @@ class AstraCameraNode final : public rclcpp::Node {
       color_info_pub_->publish(color_info);
       depth_pub_->publish(*depth_message);
       depth_info_pub_->publish(depth_info);
-      if (aligned) {
-        aligned_depth_pub_->publish(*depth_message);
-        aligned_depth_info_pub_->publish(depth_info);
-      }
     }
   }
 
@@ -409,9 +398,6 @@ class AstraCameraNode final : public rclcpp::Node {
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr depth_info_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr aligned_depth_pub_;
-  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr aligned_depth_info_pub_;
-
   std::atomic<bool> running_{false};
   std::thread capture_thread_;
 };

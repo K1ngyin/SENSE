@@ -58,10 +58,8 @@ ros2 topic echo /camera/depth/camera_info --once
 | `/camera/color/camera_info` | `sensor_msgs/msg/CameraInfo` | RGB 相机标定信息 |
 | `/camera/depth/image_raw` | `sensor_msgs/msg/Image` | 16 位毫米深度图，编码为 `16UC1`；0 表示无效深度 |
 | `/camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | 深度标定信息；配准后使用 RGB 相机内参 |
-| `/camera/aligned_depth_to_color/image_raw` | `sensor_msgs/msg/Image` | 仅在启用深度到彩色图配准时发布 |
-| `/camera/aligned_depth_to_color/camera_info` | `sensor_msgs/msg/CameraInfo` | 配准深度图对应的 RGB 相机内参 |
 
-设备支持配准且深度图分辨率与 RGB 相同时，`/camera/depth/image_raw` 和 `/camera/aligned_depth_to_color/image_raw` 发布相同的配准深度帧，其坐标系为 `camera_color_optical_frame`。否则只发布原始坐标系下的深度图，坐标系为 `camera_depth_optical_frame`。
+设备支持配准且深度图分辨率与 RGB 相同时，`/camera/depth/image_raw` 发布配准后的深度帧，坐标系为 `camera_color_optical_frame`；否则发布原始深度图，坐标系为 `camera_depth_optical_frame`。节点不再单独发布对齐深度话题。
 
 ## 相机标定
 
