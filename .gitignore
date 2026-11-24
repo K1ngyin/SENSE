@@ -1,1 +1,19 @@
 doc/
+
+# ROS 2 / colcon workspace output
+/ros2_ws/build/
+/ros2_ws/install/
+/ros2_ws/log/
+/ros2_ws/.colcon/
+/ros2_ws/compile_commands.json
+
+# Python and ament_python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Python test and coverage output
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/

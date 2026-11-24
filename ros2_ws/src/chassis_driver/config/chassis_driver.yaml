@@ -1,0 +1,28 @@
+chassis_driver:
+  ros__parameters:
+    port: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C98180921-if00"
+    baudrate: 115200
+    serial_timeout_sec: 0.1
+    reconnect_interval_sec: 1.0
+    frame_timeout_sec: 0.5
+    max_integration_dt_sec: 0.25
+    publish_period_sec: 0.005
+    diagnostics_period_sec: 1.0
+
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    imu_frame_id: "imu_link"
+    odom_topic: "/odom"
+    imu_topic: "/imu/data_raw"
+    battery_topic: "/battery_state"
+    diagnostics_topic: "/diagnostics"
+
+    # Starting covariance values; tune these from measured chassis data.
+    odom_pose_variance_xy_m2: 0.05
+    odom_pose_variance_yaw_rad2: 0.1
+    odom_twist_variance_xy_m2ps2: 0.02
+    odom_twist_variance_wz_rad2ps2: 0.05
+
+    # Zero marks IMU covariance as unknown until it has been measured.
+    imu_acceleration_variance_m2ps4: 0.0
+    imu_angular_velocity_variance_rad2ps2: 0.0
