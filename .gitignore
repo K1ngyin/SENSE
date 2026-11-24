@@ -17,3 +17,7 @@ __pycache__/
 .coverage
 .coverage.*
 htmlcov/
+
+
+
+camera/test_img/
