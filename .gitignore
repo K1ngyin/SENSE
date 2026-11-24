@@ -31,3 +31,5 @@ ENV/
 # Camera SDK download cache and locally built helper
 camera/.sdk_cache/
 camera/openni_depth_capture
+
+.vscode/
