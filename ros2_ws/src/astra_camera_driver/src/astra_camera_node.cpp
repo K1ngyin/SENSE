@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifndef OPENNI2_REDIST_DEFAULT
 #define OPENNI2_REDIST_DEFAULT ""
@@ -61,12 +62,35 @@ class AstraCameraNode final : public rclcpp::Node {
         "color_camera_info_url", "");
     const auto depth_info_url = declare_parameter<std::string>(
         "depth_camera_info_url", "");
+    color_camera_matrix_ = declare_parameter<std::vector<double>>(
+        "color_camera_matrix", std::vector<double>{});
+    color_distortion_coefficients_ = declare_parameter<std::vector<double>>(
+        "color_distortion_coefficients", std::vector<double>{});
+    depth_camera_matrix_ = declare_parameter<std::vector<double>>(
+        "depth_camera_matrix", std::vector<double>{});
+    depth_distortion_coefficients_ = declare_parameter<std::vector<double>>(
+        "depth_distortion_coefficients", std::vector<double>{});
+    // Expose the SDK's Depth -> RGB transform for consumers that need to
+    // publish/use the corresponding TF. Translation remains in SDK units.
+    depth_to_color_rotation_ = declare_parameter<std::vector<double>>(
+        "depth_to_color_rotation", std::vector<double>{});
+    depth_to_color_translation_sdk_units_ = declare_parameter<std::vector<double>>(
+        "depth_to_color_translation_sdk_units", std::vector<double>{});
 
     if (width_ <= 0 || height_ <= 0 || fps_ <= 0.0 || sync_tolerance_ms_ < 0.0) {
       throw std::invalid_argument("width, height, and fps must be positive; sync_tolerance_ms cannot be negative");
     }
     if (rgb_format_.size() != 4) {
       throw std::invalid_argument("rgb_format must be a four-character V4L2 format such as MJPG or YUYV");
+    }
+    validateCalibration(color_camera_matrix_, color_distortion_coefficients_, "color");
+    validateCalibration(depth_camera_matrix_, depth_distortion_coefficients_, "depth");
+    if (!depth_to_color_rotation_.empty() && depth_to_color_rotation_.size() != 9) {
+      throw std::invalid_argument("depth_to_color_rotation must contain 9 row-major values");
+    }
+    if (!depth_to_color_translation_sdk_units_.empty() &&
+        depth_to_color_translation_sdk_units_.size() != 3) {
+      throw std::invalid_argument("depth_to_color_translation_sdk_units must contain 3 values");
     }
 
     color_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(
@@ -79,10 +103,10 @@ class AstraCameraNode final : public rclcpp::Node {
     if (!depth_info_url.empty() && !depth_info_manager_->loadCameraInfo(depth_info_url)) {
       RCLCPP_WARN(get_logger(), "Could not load depth calibration from '%s'", depth_info_url.c_str());
     }
-    if (!color_info_manager_->isCalibrated()) {
+    if (!color_info_manager_->isCalibrated() && color_camera_matrix_.empty()) {
       RCLCPP_WARN(get_logger(), "RGB CameraInfo is uncalibrated (K[0] = 0); set color_camera_info_url to a calibration YAML");
     }
-    if (!depth_info_manager_->isCalibrated()) {
+    if (!depth_info_manager_->isCalibrated() && depth_camera_matrix_.empty()) {
       RCLCPP_WARN(get_logger(), "Depth CameraInfo is uncalibrated (K[0] = 0); set depth_camera_info_url to a calibration YAML");
     }
 
@@ -185,11 +209,45 @@ class AstraCameraNode final : public rclcpp::Node {
                 video_device_.c_str(), width_, height_, fps_, rgb_format_.c_str());
   }
 
+  static void validateCalibration(const std::vector<double>& matrix,
+                                  const std::vector<double>& distortion,
+                                  const char* stream_name) {
+    if (matrix.empty() != distortion.empty()) {
+      throw std::invalid_argument(std::string(stream_name) +
+                                  " camera matrix and distortion coefficients must both be set");
+    }
+    if (!matrix.empty() && matrix.size() != 9) {
+      throw std::invalid_argument(std::string(stream_name) +
+                                  " camera matrix must contain 9 row-major values");
+    }
+    if (!distortion.empty() && distortion.size() != 5) {
+      throw std::invalid_argument(std::string(stream_name) +
+                                  " distortion coefficients must contain 5 values [k1,k2,p1,p2,k3]");
+    }
+  }
+
   sensor_msgs::msg::CameraInfo cameraInfo(
       camera_info_manager::CameraInfoManager& manager,
-      const std_msgs::msg::Header& header, int width, int height) {
+      const std_msgs::msg::Header& header, int width, int height,
+      bool color_calibration) {
     auto info = manager.getCameraInfo();
-    if (!manager.isCalibrated()) {
+    const auto& matrix = color_calibration ? color_camera_matrix_ : depth_camera_matrix_;
+    const auto& distortion = color_calibration
+        ? color_distortion_coefficients_ : depth_distortion_coefficients_;
+    if (!matrix.empty()) {
+      info.width = static_cast<std::uint32_t>(width);
+      info.height = static_cast<std::uint32_t>(height);
+      info.distortion_model = "plumb_bob";
+      std::copy(matrix.begin(), matrix.end(), info.k.begin());
+      info.d = distortion;
+      info.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+      info.p.fill(0.0);
+      info.p[0] = matrix[0];
+      info.p[2] = matrix[2];
+      info.p[5] = matrix[4];
+      info.p[6] = matrix[5];
+      info.p[10] = 1.0;
+    } else if (!manager.isCalibrated()) {
       info.width = static_cast<std::uint32_t>(width);
       info.height = static_cast<std::uint32_t>(height);
       info.distortion_model = "plumb_bob";
@@ -304,10 +362,12 @@ class AstraCameraNode final : public rclcpp::Node {
       const auto depth_message = cv_bridge::CvImage(
           depth_header, sensor_msgs::image_encodings::TYPE_16UC1, depth_mm).toImageMsg();
       auto color_info = cameraInfo(*color_info_manager_, color_header,
-                                   color_bgr.cols, color_bgr.rows);
+                                   color_bgr.cols, color_bgr.rows, true);
       auto depth_info = aligned
-          ? cameraInfo(*color_info_manager_, depth_header, depth_mm.cols, depth_mm.rows)
-          : cameraInfo(*depth_info_manager_, depth_header, depth_mm.cols, depth_mm.rows);
+          ? cameraInfo(*color_info_manager_, depth_header, depth_mm.cols,
+                       depth_mm.rows, true)
+          : cameraInfo(*depth_info_manager_, depth_header, depth_mm.cols,
+                       depth_mm.rows, false);
 
       color_pub_->publish(*color_message);
       color_info_pub_->publish(color_info);
@@ -324,6 +384,12 @@ class AstraCameraNode final : public rclcpp::Node {
   std::string rgb_format_;
   std::string color_frame_id_;
   std::string depth_frame_id_;
+  std::vector<double> color_camera_matrix_;
+  std::vector<double> color_distortion_coefficients_;
+  std::vector<double> depth_camera_matrix_;
+  std::vector<double> depth_distortion_coefficients_;
+  std::vector<double> depth_to_color_rotation_;
+  std::vector<double> depth_to_color_translation_sdk_units_;
   int width_{640};
   int height_{480};
   double fps_{30.0};

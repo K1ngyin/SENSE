@@ -21,3 +21,14 @@ astra_camera_node:
 
     color_camera_info_url: ""
     depth_camera_info_url: ""
+
+    # Astra calibration from camera/camera_calibration.txt (640x480).
+    # Matrices are row-major; distortion is [k1, k2, p1, p2, k3].
+    color_camera_matrix: [544.159606934, 0.0, 319.315093994, 0.0, 544.159606934, 231.345520020, 0.0, 0.0, 1.0]
+    color_distortion_coefficients: [0.123432681, -0.221229792, -0.004175027, 0.006890988, 0.035090718]
+    depth_camera_matrix: [577.483825684, 0.0, 319.892303467, 0.0, 577.483825684, 230.340896606, 0.0, 0.0, 1.0]
+    depth_distortion_coefficients: [-0.092761658, 0.137167618, -0.004514716, 0.007484818, -0.007775190]
+
+    # Depth -> RGB transform from the SDK. Translation stays in SDK units.
+    depth_to_color_rotation: [0.999922454, 0.012030018, -0.003221157, -0.012024828, 0.999926388, 0.001625513, 0.003240474, -0.001586653, 0.999993503]
+    depth_to_color_translation_sdk_units: [25.037195206, 0.174582317, 3.701352119]

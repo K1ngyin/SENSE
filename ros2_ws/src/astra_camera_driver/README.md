@@ -18,9 +18,17 @@ sudo apt install -y ros-humble-cv-bridge ros-humble-camera-info-manager libopenc
 
 ## 构建和启动
 
+首次配置相机时，在 Ubuntu ARM64 设备上安装 OpenNI2 SDK 和系统依赖；已经安装过则跳过此步：
+
 ```bash
-cd ~/project/SENSE
+cd /home/ucas/project/SENSE
 bash camera/install_astra_openni.sh
+```
+
+在项目根目录构建并启动 ROS 2 节点：
+
+```bash
+cd /home/ucas/project/SENSE
 source /opt/ros/humble/setup.bash
 cd ros2_ws
 rosdep install --from-paths src --ignore-src -r -y
@@ -29,7 +37,18 @@ source install/setup.bash
 ros2 launch astra_camera_driver astra_camera.launch.py
 ```
 
+启动文件默认加载 `astra_camera_driver/config/astra_camera.yaml`。修改该文件后重新执行 `colcon build --packages-select astra_camera_driver`，再 source `install/setup.bash`，确保安装空间使用最新配置。停止节点按 `Ctrl+C`。
+
 相机安装脚本会把 SDK 缓存在 `camera/.sdk_cache/`。缓存压缩包通过 ZIP 校验后，重复运行时会跳过下载。安装脚本也会编译一个单帧采集辅助程序；ROS 节点会自行持续读取 RGB 和深度流，不会逐帧启动该辅助程序。
+
+启动后可检查节点和话题：
+
+```bash
+ros2 node list
+ros2 topic list
+ros2 topic echo /camera/color/camera_info --once
+ros2 topic echo /camera/depth/camera_info --once
+```
 
 ## 发布话题
 
@@ -46,17 +65,19 @@ ros2 launch astra_camera_driver astra_camera.launch.py
 
 ## 相机标定
 
-在 `config/astra_camera.yaml` 中，将 `color_camera_info_url` 和 `depth_camera_info_url` 设置为 ROS 相机标定 YAML 文件的 URL，例如：
+`config/astra_camera.yaml` 已包含从 `camera/camera_calibration.txt` 读取的 Astra 640×480 标定参数。节点使用 `color_camera_matrix`、`depth_camera_matrix`（按行展开的 3×3 K 矩阵）和对应的 `*_distortion_coefficients`（`[k1, k2, p1, p2, k3]`）填充 ROS `CameraInfo` 的 K、D、R、P 字段。
+
+文件中的 `depth_to_color_rotation` 和 `depth_to_color_translation_sdk_units` 是 Depth → RGB 外参。平移保留 SDK 原始单位；节点将它们作为 ROS 参数提供，但目前不发布 TF。若改用独立的 ROS 相机标定文件，也可将 `color_camera_info_url` 和 `depth_camera_info_url` 设置为其 URL，例如：
 
 ```yaml
 color_camera_info_url: "file:///home/ucas/camera_calibration/color.yaml"
 depth_camera_info_url: "file:///home/ucas/camera_calibration/depth.yaml"
 ```
 
-请使用相机厂商提供的标定参数或实际标定结果，不要估算内参。未配置标定 URL 时，节点仍会发布 `CameraInfo`，但 `K[0] = 0`，表示内参尚未标定。配准深度使用 RGB 相机标定参数；未配准深度使用深度/红外相机标定参数。
+请使用相机厂商提供的标定参数或实际标定结果，不要估算内参。若内联矩阵和 URL 均未配置，节点仍会发布 `CameraInfo`，但 `K[0] = 0`，表示内参尚未标定。配准深度使用 RGB 相机标定参数；未配准深度使用深度/红外相机标定参数。当前配置对应 640×480 图像；更改采集分辨率后请确认该分辨率下的标定是否适用。
 
 ## 参数和同步方式
 
-`config/astra_camera.yaml` 可配置视频设备、图像宽高、帧率、RGB 像素格式、深度配准开关、深度镜像开关、同步时间差上限、坐标系名称、话题名称和标定文件 URL。
+`config/astra_camera.yaml` 可配置视频设备、图像宽高、帧率、RGB 像素格式、深度配准开关、深度镜像开关、同步时间差上限、坐标系名称、话题名称、内联标定矩阵/畸变系数和相机标定文件 URL。
 
 节点依据计算板接收帧的时间配对深度帧和 RGB 帧。如果两帧接收时间差超过 `sync_tolerance_ms`，该帧对会被丢弃。这是近似同步，不是相机硬件触发同步。
