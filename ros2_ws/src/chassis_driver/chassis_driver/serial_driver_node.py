@@ -1,4 +1,4 @@
-"""ROS 2 node publishing odometry and sensor messages from STM32 feedback."""
+"""ROS 2 node bridging STM32 chassis feedback and cmd_vel control."""
 
 import math
 import queue
@@ -10,12 +10,13 @@ from typing import Optional
 import serial
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import BatteryState, Imu
 
-from chassis_driver.protocol import FeedbackFrame, FrameParser
+from chassis_driver.protocol import FeedbackFrame, FrameParser, encode_command_frame
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class ReceivedFrame:
 
 
 class ChassisDriverNode(Node):
-    """Read-only serial driver; command-frame transmission is intentionally absent."""
+    """Bidirectional ROS 2 bridge for STM32 chassis feedback and velocity commands."""
 
     def __init__(self) -> None:
         super().__init__("chassis_driver")
@@ -48,6 +49,9 @@ class ChassisDriverNode(Node):
         self._diagnostics_pub = self.create_publisher(
             DiagnosticArray, self._diagnostics_topic, 10
         )
+        self._cmd_vel_sub = self.create_subscription(
+            Twist, self._cmd_vel_topic, self._cmd_vel_callback, 10
+        )
 
         self._frame_queue: queue.Queue[ReceivedFrame] = queue.Queue(maxsize=1000)
         self._stop_event = threading.Event()
@@ -63,6 +67,22 @@ class ChassisDriverNode(Node):
         self._bytes_discarded = 0
         self._queue_drop_count = 0
         self._integration_gap_count = 0
+        self._cmd_vx_m_s = 0.0
+        self._cmd_wz_ros_rad_s = 0.0
+        self._cmd_last_received_monotonic: Optional[float] = None
+        self._cmd_state = "waiting"
+        self._cmd_tx_count = 0
+        self._cmd_rx_count = 0
+        self._cmd_timeout_count = 0
+        self._cmd_saturation_count = 0
+        self._cmd_unsupported_count = 0
+        self._cmd_invalid_count = 0
+        self._cmd_current_saturated = False
+        self._cmd_current_unsupported = False
+        self._cmd_current_invalid = False
+        self._cmd_last_transmitted_vx = 0.0
+        self._cmd_last_transmitted_wz = 0.0
+        self._last_cmd_timeout_transition = False
         self._last_rate_sample_time = time.monotonic()
         self._last_rate_sample_count = 0
         self._frame_rate_hz = 0.0
@@ -85,14 +105,15 @@ class ChassisDriverNode(Node):
         )
 
         self.get_logger().info(
-            f"Feedback-only chassis driver started for {self._port} at {self._baudrate} baud"
+            f"Chassis driver started for {self._port} at {self._baudrate} baud; "
+            f"subscribing to {self._cmd_vel_topic}"
         )
 
     def _declare_parameters(self) -> None:
         defaults = {
             "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C98180921-if00",
             "baudrate": 115200,
-            "serial_timeout_sec": 0.1,
+            "serial_timeout_sec": 0.01,
             "reconnect_interval_sec": 1.0,
             "frame_timeout_sec": 0.5,
             "max_integration_dt_sec": 0.25,
@@ -105,6 +126,11 @@ class ChassisDriverNode(Node):
             "imu_topic": "/imu/data_raw",
             "battery_topic": "/battery_state",
             "diagnostics_topic": "/diagnostics",
+            "cmd_vel_topic": "/cmd_vel",
+            "cmd_publish_rate_hz": 20.0,
+            "cmd_vel_timeout_sec": 0.5,
+            "max_linear_x_m_s": 0.2,
+            "max_angular_z_rad_s": 0.5,
             "odom_pose_variance_xy_m2": 0.05,
             "odom_pose_variance_yaw_rad2": 0.1,
             "odom_twist_variance_xy_m2ps2": 0.02,
@@ -133,6 +159,11 @@ class ChassisDriverNode(Node):
         self._imu_topic = str(get("imu_topic"))
         self._battery_topic = str(get("battery_topic"))
         self._diagnostics_topic = str(get("diagnostics_topic"))
+        self._cmd_vel_topic = str(get("cmd_vel_topic"))
+        self._cmd_publish_rate_hz = float(get("cmd_publish_rate_hz"))
+        self._cmd_vel_timeout_sec = float(get("cmd_vel_timeout_sec"))
+        self._max_linear_x_m_s = float(get("max_linear_x_m_s"))
+        self._max_angular_z_rad_s = float(get("max_angular_z_rad_s"))
 
         self._odom_pose_variance_xy = float(get("odom_pose_variance_xy_m2"))
         self._odom_pose_variance_yaw = float(get("odom_pose_variance_yaw_rad2"))
@@ -154,6 +185,10 @@ class ChassisDriverNode(Node):
             ("max_integration_dt_sec", self._max_integration_dt_sec),
             ("publish_period_sec", self._publish_period_sec),
             ("diagnostics_period_sec", self._diagnostics_period_sec),
+            ("cmd_publish_rate_hz", self._cmd_publish_rate_hz),
+            ("cmd_vel_timeout_sec", self._cmd_vel_timeout_sec),
+            ("max_linear_x_m_s", self._max_linear_x_m_s),
+            ("max_angular_z_rad_s", self._max_angular_z_rad_s),
         ):
             if value <= 0.0:
                 raise ValueError(f"parameter '{name}' must be positive")
@@ -168,8 +203,80 @@ class ChassisDriverNode(Node):
             if value < 0.0:
                 raise ValueError(f"parameter '{name}' must be zero or positive")
 
+        if self._max_linear_x_m_s > 32.767:
+            raise ValueError("max_linear_x_m_s exceeds the command frame's int16 range")
+        if self._max_angular_z_rad_s > 32.767:
+            raise ValueError("max_angular_z_rad_s exceeds the command frame's int16 range")
+
+    def _cmd_vel_callback(self, message: Twist) -> None:
+        now = time.monotonic()
+        requested = (
+            message.linear.x,
+            message.linear.y,
+            message.linear.z,
+            message.angular.x,
+            message.angular.y,
+            message.angular.z,
+        )
+        invalid = not all(math.isfinite(value) for value in requested)
+        unsupported = False if invalid else any(
+            abs(value) > 1.0e-6
+            for value in (
+                message.linear.y,
+                message.linear.z,
+                message.angular.x,
+                message.angular.y,
+            )
+        )
+
+        if invalid:
+            vx = 0.0
+            wz = 0.0
+            saturated = False
+        else:
+            vx = max(
+                -self._max_linear_x_m_s,
+                min(self._max_linear_x_m_s, message.linear.x),
+            )
+            wz = max(
+                -self._max_angular_z_rad_s,
+                min(self._max_angular_z_rad_s, message.angular.z),
+            )
+            saturated = vx != message.linear.x or wz != message.angular.z
+
+        with self._state_lock:
+            was_saturated = self._cmd_current_saturated
+            was_unsupported = self._cmd_current_unsupported
+            was_invalid = self._cmd_current_invalid
+            self._cmd_rx_count += 1
+            self._cmd_vx_m_s = vx
+            self._cmd_wz_ros_rad_s = wz
+            self._cmd_last_received_monotonic = now
+            self._cmd_state = "invalid_zeroed" if invalid else "active"
+            self._cmd_current_saturated = saturated
+            self._cmd_current_unsupported = unsupported
+            self._cmd_current_invalid = invalid
+            if saturated:
+                self._cmd_saturation_count += 1
+            if unsupported:
+                self._cmd_unsupported_count += 1
+            if invalid:
+                self._cmd_invalid_count += 1
+
+        if invalid and not was_invalid:
+            self.get_logger().warning("Non-finite cmd_vel received; sending zero velocity")
+        if saturated and not was_saturated:
+            self.get_logger().warning(
+                "cmd_vel exceeded configured speed limits and was clipped"
+            )
+        if unsupported and not was_unsupported:
+            self.get_logger().warning(
+                "This L150 base cannot move laterally; unsupported Twist components are ignored"
+            )
+
     def _serial_worker(self) -> None:
         last_reported_error = None
+        command_period = 1.0 / self._cmd_publish_rate_hz
         while not self._stop_event.is_set():
             port = None
             parser = FrameParser()
@@ -178,38 +285,59 @@ class ChassisDriverNode(Node):
                     port=self._port,
                     baudrate=self._baudrate,
                     timeout=self._serial_timeout_sec,
+                    write_timeout=self._serial_timeout_sec,
                 )
                 with self._state_lock:
                     self._connected = True
                     self._last_error = ""
                 last_reported_error = None
                 self.get_logger().info(f"Opened chassis serial port {self._port}")
+                next_command_time = time.monotonic()
 
                 while not self._stop_event.is_set():
-                    data = port.read(128)
-                    if not data:
-                        continue
-
-                    old_bad_tail = parser.bad_tail_count
-                    old_bad_checksum = parser.bad_checksum_count
-                    old_discarded = parser.bytes_discarded
-                    frames = parser.feed(data)
-                    with self._state_lock:
-                        self._bad_tail_count += parser.bad_tail_count - old_bad_tail
-                        self._bad_checksum_count += (
-                            parser.bad_checksum_count - old_bad_checksum
-                        )
-                        self._bytes_discarded += parser.bytes_discarded - old_discarded
-
-                    for frame in frames:
-                        received_monotonic = time.monotonic()
+                    available = port.in_waiting
+                    data = port.read(min(available, 512) if available > 0 else 1)
+                    if data:
+                        old_bad_tail = parser.bad_tail_count
+                        old_bad_checksum = parser.bad_checksum_count
+                        old_discarded = parser.bytes_discarded
+                        frames = parser.feed(data)
                         with self._state_lock:
-                            self._valid_frame_count += 1
-                            self._last_frame_monotonic = received_monotonic
-                            self._last_motor_flag = frame.motor_flag
-                            self._last_battery_v = frame.battery_v
-                        ros_stamp = self.get_clock().now().to_msg()
-                        self._enqueue_frame(ReceivedFrame(frame, received_monotonic, ros_stamp))
+                            self._bad_tail_count += parser.bad_tail_count - old_bad_tail
+                            self._bad_checksum_count += (
+                                parser.bad_checksum_count - old_bad_checksum
+                            )
+                            self._bytes_discarded += parser.bytes_discarded - old_discarded
+
+                        for frame in frames:
+                            received_monotonic = time.monotonic()
+                            with self._state_lock:
+                                self._valid_frame_count += 1
+                                self._last_frame_monotonic = received_monotonic
+                                self._last_motor_flag = frame.motor_flag
+                                self._last_battery_v = frame.battery_v
+                            ros_stamp = self.get_clock().now().to_msg()
+                            self._enqueue_frame(
+                                ReceivedFrame(frame, received_monotonic, ros_stamp)
+                            )
+
+                    now = time.monotonic()
+                    if now >= next_command_time:
+                        vx_m_s, wz_ros_rad_s, command_state = self._command_for_transmit(now)
+                        # The L150 controller defines positive Z rotation as clockwise;
+                        # ROS REP-103 defines positive angular.z as counter-clockwise.
+                        command = encode_command_frame(vx_m_s, 0.0, -wz_ros_rad_s)
+                        written = port.write(command)
+                        if written != len(command):
+                            raise serial.SerialTimeoutException(
+                                f"short command write: {written}/{len(command)} bytes"
+                            )
+                        with self._state_lock:
+                            self._cmd_tx_count += 1
+                            self._cmd_state = command_state
+                            self._cmd_last_transmitted_vx = vx_m_s
+                            self._cmd_last_transmitted_wz = wz_ros_rad_s
+                        next_command_time = now + command_period
 
             except (serial.SerialException, OSError) as error:
                 message = str(error)
@@ -224,6 +352,11 @@ class ChassisDriverNode(Node):
             finally:
                 if port is not None:
                     try:
+                        # Best-effort stop on orderly shutdown or serial error.
+                        port.write(encode_command_frame(0.0, 0.0, 0.0))
+                    except (serial.SerialException, OSError):
+                        pass
+                    try:
                         port.close()
                     except (serial.SerialException, OSError):
                         pass
@@ -231,6 +364,29 @@ class ChassisDriverNode(Node):
                     self._connected = False
 
             self._stop_event.wait(self._reconnect_interval_sec)
+
+    def _command_for_transmit(self, now: float):
+        with self._state_lock:
+            last_received = self._cmd_last_received_monotonic
+            if last_received is None:
+                self._cmd_state = "waiting"
+                self._last_cmd_timeout_transition = False
+                return 0.0, 0.0, "waiting"
+
+            if now - last_received > self._cmd_vel_timeout_sec:
+                if not self._last_cmd_timeout_transition:
+                    self._cmd_timeout_count += 1
+                self._last_cmd_timeout_transition = True
+                self._cmd_state = "timeout_zeroed"
+                return 0.0, 0.0, "timeout_zeroed"
+
+            self._last_cmd_timeout_transition = False
+            if self._cmd_current_invalid:
+                self._cmd_state = "invalid_zeroed"
+                return 0.0, 0.0, "invalid_zeroed"
+
+            self._cmd_state = "active"
+            return self._cmd_vx_m_s, self._cmd_wz_ros_rad_s, "active"
 
     def _enqueue_frame(self, received: ReceivedFrame) -> None:
         try:
@@ -270,7 +426,10 @@ class ChassisDriverNode(Node):
         self._last_odom_monotonic = received.received_monotonic
 
         if dt is not None and 0.0 < dt <= self._max_integration_dt_sec:
-            delta_yaw = frame.wz_rad_s * dt
+            # The L150 feedback uses clockwise-positive Z rotation; convert it
+            # into ROS's counter-clockwise-positive angular convention.
+            wz_ros_rad_s = -frame.wz_rad_s
+            delta_yaw = wz_ros_rad_s * dt
             midpoint_yaw = self._yaw + delta_yaw * 0.5
             self._x += (
                 frame.vx_m_s * math.cos(midpoint_yaw)
@@ -308,7 +467,7 @@ class ChassisDriverNode(Node):
 
         message.twist.twist.linear.x = frame.vx_m_s
         message.twist.twist.linear.y = frame.vy_m_s
-        message.twist.twist.angular.z = frame.wz_rad_s
+        message.twist.twist.angular.z = -frame.wz_rad_s
         message.twist.covariance = self._planar_covariance(
             self._odom_twist_variance_xy, self._odom_twist_variance_wz
         )
@@ -365,6 +524,19 @@ class ChassisDriverNode(Node):
             bytes_discarded = self._bytes_discarded
             queue_drops = self._queue_drop_count
             integration_gaps = self._integration_gap_count
+            cmd_state = self._cmd_state
+            cmd_last_received = self._cmd_last_received_monotonic
+            cmd_tx_count = self._cmd_tx_count
+            cmd_rx_count = self._cmd_rx_count
+            cmd_timeout_count = self._cmd_timeout_count
+            cmd_saturation_count = self._cmd_saturation_count
+            cmd_unsupported_count = self._cmd_unsupported_count
+            cmd_invalid_count = self._cmd_invalid_count
+            cmd_saturated = self._cmd_current_saturated
+            cmd_unsupported = self._cmd_current_unsupported
+            cmd_invalid = self._cmd_current_invalid
+            cmd_last_tx_vx = self._cmd_last_transmitted_vx
+            cmd_last_tx_wz = self._cmd_last_transmitted_wz
 
             sample_dt = now_monotonic - self._last_rate_sample_time
             if sample_dt > 0.0:
@@ -374,6 +546,11 @@ class ChassisDriverNode(Node):
             frame_rate = self._frame_rate_hz
 
         frame_age = None if last_frame is None else max(0.0, now_monotonic - last_frame)
+        cmd_age = (
+            None
+            if cmd_last_received is None
+            else max(0.0, now_monotonic - cmd_last_received)
+        )
         motor_state = self._motor_state_name(motor_flag)
 
         status = DiagnosticStatus()
@@ -397,6 +574,18 @@ class ChassisDriverNode(Node):
         elif queue_drops:
             status.level = DiagnosticStatus.WARN
             status.message = "ROS publisher queue has dropped feedback frames"
+        elif cmd_invalid:
+            status.level = DiagnosticStatus.WARN
+            status.message = "invalid cmd_vel was replaced with zero velocity"
+        elif cmd_unsupported:
+            status.level = DiagnosticStatus.WARN
+            status.message = "unsupported cmd_vel components were ignored"
+        elif cmd_saturated:
+            status.level = DiagnosticStatus.WARN
+            status.message = "cmd_vel was clipped to configured speed limits"
+        elif cmd_state == "timeout_zeroed":
+            status.level = DiagnosticStatus.WARN
+            status.message = "cmd_vel timeout; zero velocity is being sent"
 
         values = [
             ("connected", str(connected).lower()),
@@ -413,6 +602,17 @@ class ChassisDriverNode(Node):
             ("motor_state", motor_state),
             ("battery_voltage_v", "unknown" if battery_v is None else f"{battery_v:.3f}"),
             ("last_frame_age_s", "unknown" if frame_age is None else f"{frame_age:.3f}"),
+            ("cmd_vel_topic", self._cmd_vel_topic),
+            ("cmd_vel_state", cmd_state),
+            ("cmd_vel_age_s", "unknown" if cmd_age is None else f"{cmd_age:.3f}"),
+            ("cmd_vel_received_count", str(cmd_rx_count)),
+            ("command_frame_sent_count", str(cmd_tx_count)),
+            ("command_timeout_count", str(cmd_timeout_count)),
+            ("command_saturation_count", str(cmd_saturation_count)),
+            ("unsupported_command_count", str(cmd_unsupported_count)),
+            ("invalid_command_count", str(cmd_invalid_count)),
+            ("last_command_linear_x_m_s", f"{cmd_last_tx_vx:.3f}"),
+            ("last_command_angular_z_rad_s", f"{cmd_last_tx_wz:.3f}"),
             ("last_serial_error", last_error or "none"),
         ]
         status.values = [KeyValue(key=key, value=value) for key, value in values]

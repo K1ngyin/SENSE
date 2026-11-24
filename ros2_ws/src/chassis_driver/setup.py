@@ -20,7 +20,7 @@ setup(
     zip_safe=True,
     maintainer="SENSE project",
     maintainer_email="robot@example.com",
-    description="Serial feedback driver for the STM32 mobile robot chassis.",
+    description="Serial feedback and velocity driver for the STM32 mobile robot chassis.",
     license="MIT",
     entry_points={
         "console_scripts": [

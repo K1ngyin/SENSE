@@ -7,6 +7,7 @@ from typing import List
 FRAME_LEN = 24
 FRAME_HEAD = 0x7B
 FRAME_TAIL = 0x7D
+COMMAND_FRAME_LEN = 11
 
 
 @dataclass(frozen=True)
@@ -29,12 +30,16 @@ def _unsigned_int16_be(frame: bytes, offset: int) -> int:
     return (frame[offset] << 8) | frame[offset + 1]
 
 
-def checksum_bcc(frame: bytes) -> int:
-    """Return XOR of bytes 0 through 21, matching serial_monitor.py."""
+def _xor_bytes(data: bytes) -> int:
     value = 0
-    for byte in frame[:22]:
+    for byte in data:
         value ^= byte
     return value
+
+
+def checksum_bcc(frame: bytes) -> int:
+    """Return XOR of feedback-frame bytes 0 through 21."""
+    return _xor_bytes(frame[:22])
 
 
 def decode_frame(frame: bytes) -> FeedbackFrame:
@@ -55,6 +60,29 @@ def decode_frame(frame: bytes) -> FeedbackFrame:
         gyro_rad_s=tuple(_signed_int16_be(frame, i) / 3753.0 for i in (14, 16, 18)),
         battery_v=_unsigned_int16_be(frame, 20) / 1000.0,
     )
+
+
+def _signed_int16_bytes_be(value: int) -> bytes:
+    if not -0x8000 <= value <= 0x7FFF:
+        raise ValueError("command value does not fit in signed int16")
+    return value.to_bytes(2, byteorder="big", signed=True)
+
+
+def encode_command_frame(vx_m_s: float, vy_m_s: float, wz_rad_s: float) -> bytes:
+    """Encode the 11-byte command frame documented for the L150 chassis.
+
+    Speeds use 0.001 m/s and 0.001 rad/s units. The two reserved bytes are
+    zeroed. The BCC is XOR of bytes 0 through 8.
+    """
+    frame = bytearray((FRAME_HEAD, 0x00, 0x00))
+    for value in (vx_m_s, vy_m_s, wz_rad_s):
+        scaled = int(round(value * 1000.0))
+        frame.extend(_signed_int16_bytes_be(scaled))
+    frame.append(_xor_bytes(frame))
+    frame.append(FRAME_TAIL)
+    if len(frame) != COMMAND_FRAME_LEN:
+        raise RuntimeError("internal command frame length error")
+    return bytes(frame)
 
 
 class FrameParser:

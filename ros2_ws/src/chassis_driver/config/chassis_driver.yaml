@@ -2,7 +2,7 @@ chassis_driver:
   ros__parameters:
     port: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C98180921-if00"
     baudrate: 115200
-    serial_timeout_sec: 0.1
+    serial_timeout_sec: 0.01
     reconnect_interval_sec: 1.0
     frame_timeout_sec: 0.5
     max_integration_dt_sec: 0.25
@@ -16,6 +16,13 @@ chassis_driver:
     imu_topic: "/imu/data_raw"
     battery_topic: "/battery_state"
     diagnostics_topic: "/diagnostics"
+    cmd_vel_topic: "/cmd_vel"
+    cmd_publish_rate_hz: 20.0
+    cmd_vel_timeout_sec: 0.5
+
+    # Conservative commissioning limits; adjust only after checking the chassis.
+    max_linear_x_m_s: 0.2
+    max_angular_z_rad_s: 0.5
 
     # Starting covariance values; tune these from measured chassis data.
     odom_pose_variance_xy_m2: 0.05
