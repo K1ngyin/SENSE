@@ -86,8 +86,14 @@ def capture_depth(helper, timeout, np, output_dir):
                     result.stdout.strip()
                 )
             )
-        _, width_text, height_text = frame_line.split()
+        fields = frame_line.split()
+        if len(fields) != 5:
+            raise RuntimeError(
+                "Unexpected OpenNI helper metadata: {}".format(frame_line)
+            )
+        _, width_text, height_text, units, aligned_text = fields
         width, height = int(width_text), int(height_text)
+        aligned = aligned_text == "1"
         depth = np.fromfile(str(raw_path), dtype="<u2")
         if depth.size != width * height:
             raise RuntimeError(
@@ -95,9 +101,75 @@ def capture_depth(helper, timeout, np, output_dir):
                     width * height, depth.size
                 )
             )
-        return depth.reshape((height, width)).copy()
+        return depth.reshape((height, width)).copy(), units, aligned
     finally:
         raw_path.unlink(missing_ok=True)
+
+
+def colorize_depth_with_bar(cv2, np, depth, units):
+    valid = depth[depth > 0]
+    normalized = np.zeros(depth.shape, dtype=np.uint8)
+    if valid.size:
+        # Percentiles keep a few extreme samples from flattening the preview.
+        near = float(np.percentile(valid, 2))
+        far = float(np.percentile(valid, 98))
+        if far <= near:
+            far = near + 1.0
+        normalized = np.clip(
+            (depth.astype(np.float32) - near) * (255.0 / (far - near)),
+            0,
+            255,
+        ).astype(np.uint8)
+    else:
+        near, far = 0.0, 1.0
+
+    color = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
+    color[depth == 0] = 0
+
+    height, width = depth.shape
+    bar_top = 36
+    bar_bottom = max(bar_top + 1, height - 18)
+    bar_x = width + 12
+    bar_width = 24
+    canvas = np.zeros((height, width + 150, 3), dtype=np.uint8)
+    canvas[:, :width] = color
+
+    for y in range(bar_top, bar_bottom + 1):
+        fraction = 1.0 - (y - bar_top) / float(bar_bottom - bar_top)
+        index = int(round(255.0 * fraction))
+        sample = np.array([[index]], dtype=np.uint8)
+        bgr = cv2.applyColorMap(sample, cv2.COLORMAP_JET)[0, 0]
+        canvas[y, bar_x : bar_x + bar_width] = bgr
+
+    if units == "MM":
+        scale_to_meters = 0.001
+        unit_label = "Depth (m)"
+        format_value = lambda value: "{:.2f}".format(value * scale_to_meters)
+    elif units == "100UM":
+        scale_to_meters = 0.0001
+        unit_label = "Depth (m)"
+        format_value = lambda value: "{:.2f}".format(value * scale_to_meters)
+    else:
+        unit_label = "Depth raw"
+        format_value = lambda value: "{:.0f}".format(value)
+
+    cv2.putText(
+        canvas, unit_label, (bar_x - 3, 22), cv2.FONT_HERSHEY_SIMPLEX,
+        0.42, (255, 255, 255), 1, cv2.LINE_AA
+    )
+    for tick in range(5):
+        fraction = tick / 4.0
+        y = int(round(bar_top + fraction * (bar_bottom - bar_top)))
+        value = far - fraction * (far - near)
+        cv2.line(canvas, (bar_x + bar_width, y), (bar_x + bar_width + 5, y),
+                 (255, 255, 255), 1)
+        cv2.putText(
+            canvas, format_value(value), (bar_x + bar_width + 9, y + 4),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA
+        )
+    cv2.rectangle(canvas, (bar_x, bar_top), (bar_x + bar_width, bar_bottom),
+                  (230, 230, 230), 1)
+    return canvas, valid
 
 
 def main():
@@ -119,7 +191,7 @@ def main():
         output_dir.mkdir(parents=True, exist_ok=True)
 
         rgb = capture_rgb(cv2, args.rgb_device, args.width, args.height)
-        depth = capture_depth(helper, args.timeout, np, output_dir)
+        depth, units, aligned = capture_depth(helper, args.timeout, np, output_dir)
 
         rgb_path = output_dir / "rgb.png"
         depth_path = output_dir / "depth.png"
@@ -129,20 +201,7 @@ def main():
         if not cv2.imwrite(str(depth_path), depth):
             raise RuntimeError("Failed to write {}".format(depth_path))
 
-        valid = depth[depth > 0]
-        normalized = np.zeros(depth.shape, dtype=np.uint8)
-        if valid.size:
-            near, far = int(valid.min()), int(valid.max())
-            if far > near:
-                normalized = np.clip(
-                    (depth.astype(np.float32) - near) * (255.0 / (far - near)),
-                    0,
-                    255,
-                ).astype(np.uint8)
-            else:
-                normalized[depth > 0] = 255
-        depth_color = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
-        depth_color[depth == 0] = 0
+        depth_color, valid = colorize_depth_with_bar(cv2, np, depth, units)
         if not cv2.imwrite(str(preview_path), depth_color):
             raise RuntimeError("Failed to write {}".format(preview_path))
 
@@ -153,6 +212,21 @@ def main():
             depth_path, depth.shape[1], depth.shape[0]
         ))
         print("Depth preview:      {}".format(preview_path))
+        if aligned:
+            if depth.shape[:2] == rgb.shape[:2]:
+                print("Depth registration: depth-to-color enabled")
+            else:
+                print(
+                    "Warning: depth-to-color registration is enabled, but frame "
+                    "sizes differ (RGB {}x{}, depth {}x{}).".format(
+                        rgb.shape[1], rgb.shape[0], depth.shape[1], depth.shape[0]
+                    )
+                )
+        else:
+            print(
+                "Warning: OpenNI reports depth-to-color registration unsupported; "
+                "depth remains in native coordinates."
+            )
         if valid.size:
             print("Valid depth values: {} to {} (OpenNI depth units)".format(
                 int(valid.min()), int(valid.max())
