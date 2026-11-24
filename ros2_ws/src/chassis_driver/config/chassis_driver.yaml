@@ -3,6 +3,7 @@ chassis_driver:
     port: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C98180921-if00"
     baudrate: 115200
     serial_timeout_sec: 0.01
+    serial_write_timeout_sec: 0.1
     reconnect_interval_sec: 1.0
     frame_timeout_sec: 0.5
     max_integration_dt_sec: 0.25

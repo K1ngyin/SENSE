@@ -114,6 +114,7 @@ class ChassisDriverNode(Node):
             "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5C98180921-if00",
             "baudrate": 115200,
             "serial_timeout_sec": 0.01,
+            "serial_write_timeout_sec": 0.1,
             "reconnect_interval_sec": 1.0,
             "frame_timeout_sec": 0.5,
             "max_integration_dt_sec": 0.25,
@@ -146,6 +147,7 @@ class ChassisDriverNode(Node):
         self._port = str(get("port"))
         self._baudrate = int(get("baudrate"))
         self._serial_timeout_sec = float(get("serial_timeout_sec"))
+        self._serial_write_timeout_sec = float(get("serial_write_timeout_sec"))
         self._reconnect_interval_sec = float(get("reconnect_interval_sec"))
         self._frame_timeout_sec = float(get("frame_timeout_sec"))
         self._max_integration_dt_sec = float(get("max_integration_dt_sec"))
@@ -180,6 +182,7 @@ class ChassisDriverNode(Node):
             raise ValueError("parameter 'baudrate' must be positive")
         for name, value in (
             ("serial_timeout_sec", self._serial_timeout_sec),
+            ("serial_write_timeout_sec", self._serial_write_timeout_sec),
             ("reconnect_interval_sec", self._reconnect_interval_sec),
             ("frame_timeout_sec", self._frame_timeout_sec),
             ("max_integration_dt_sec", self._max_integration_dt_sec),
@@ -285,7 +288,7 @@ class ChassisDriverNode(Node):
                     port=self._port,
                     baudrate=self._baudrate,
                     timeout=self._serial_timeout_sec,
-                    write_timeout=self._serial_timeout_sec,
+                    write_timeout=self._serial_write_timeout_sec,
                 )
                 with self._state_lock:
                     self._connected = True

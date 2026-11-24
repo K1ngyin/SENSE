@@ -37,6 +37,8 @@ ros2 launch chassis_driver chassis_driver.launch.py port:=/dev/ttyUSB0
 
 订阅类型为 `geometry_msgs/msg/Twist`。支持 `linear.x`（m/s）和 `angular.z`（rad/s）；L150 不支持 Y 轴平移，`linear.y` 及其他未支持分量会被忽略并记入诊断。控制帧以 20 Hz 定期发送，超过 `cmd_vel_timeout_sec` 没有新命令时自动发送零速度。默认速度限制为 `linear.x` ±0.2 m/s、`angular.z` ±0.5 rad/s，超过后会限幅；可在 YAML 中修改。
 
+串口读取超时和写入超时分开配置：默认 `serial_timeout_sec=0.01`、`serial_write_timeout_sec=0.1`。若写控制帧超时，节点会关闭并尝试重连串口；重连期间无法发出速度指令，底盘端应配置串口失联停车保护。
+
 控制帧依据 L150 手册：11 字节，帧头 `0x7B`，两个预留字节置零，X/Y/Z 三轴目标速度为大端有符号 16 位数，BCC 为前 9 字节异或，帧尾 `0x7D`。速度按千分之一单位编码。控制器 Z 轴以顺时针为正，节点将 ROS 的逆时针正方向转换后发送。初次上电控制前请先架空车轮验证方向和限速。若串口断开，节点无法发送停止帧；底盘固件侧仍需有串口失联停车保护。
 
 可用 teleop 节点或如下命令持续发布速度，停止发布后节点会在超时后归零：
