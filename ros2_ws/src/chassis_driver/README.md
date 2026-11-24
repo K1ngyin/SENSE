@@ -43,7 +43,31 @@ ros2 launch chassis_driver chassis_driver.launch.py port:=/dev/ttyUSB0
 
 ROS 控制模式需在小车处于 APP 或 PS2 遥控模式时使用；控制串口为 STM32 的 UART3，主控板经 CH9102 USB 串口连接计算板。反馈帧仍为 24 字节、20 Hz，BCC 对帧头及前 21 个字段异或。陀螺仪角速度换算系数按新版手册为 3755。若串口断开，节点无法发送停止帧；底盘固件侧仍需有串口失联停车保护。初次上电控制前请先架空车轮验证方向和限速。
 
-可用 teleop 节点或如下命令持续发布速度，停止发布后节点会在超时后归零：
+### 完整运行示例：前进并向右转
+
+小车先切换到 APP 或 PS2 遥控模式。打开两个终端；每个新终端都需要加载 ROS 2 环境，除非已将 source 命令加入 `~/.bashrc`。
+
+终端 A 启动底盘驱动并保持运行：
+
+```bash
+cd ~/project/SENSE/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select chassis_driver
+source install/setup.bash
+ros2 launch chassis_driver chassis_driver.launch.py
+```
+
+如果驱动节点已经运行，不要再启动第二个实例。终端 B 加载环境并持续发布前进、同时顺时针右转的速度指令：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/project/SENSE/ros2_ws/install/setup.bash
+ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.1}, angular: {z: -0.3}}"
+```
+
+其中 `linear.x: 0.1` 表示前进 0.1 m/s，`angular.z: -0.3` 表示顺时针右转 0.3 rad/s。按终端 B 的 `Ctrl+C` 停止发布后，驱动会在 `cmd_vel_timeout_sec` 超时后持续发送零速度；需要立即停车时可先停止持续发布，再单独发送一次全零 Twist。
+
+简单发布示例如下，停止发布后节点会在超时后归零：
 
 ```bash
 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
