@@ -65,29 +65,36 @@ if(NOT OPENNI2_INCLUDE_DIR OR NOT OPENNI2_LIBRARY)
     "OpenNI2 headers/library not found. Run bash camera/install_astra_openni.sh first.")
 endif()
 
-# OpenNI loads device plugins from <redist>/OpenNI2/Drivers. Prefer the
-# installed path; fall back to the bundled ARM64 SDK tree.
+# OpenNI loads device plugins from <redist>/OpenNI2/Drivers. Use find rather
+# than a CMake glob because SDK archives may contain multiple nested folders.
 set(OPENNI2_REDIST_DIR "")
-set(_openni_driver_dirs
-  "/usr/lib/OpenNI2/Drivers"
-  "/usr/lib/aarch64-linux-gnu/OpenNI2/Drivers"
-  "/usr/local/lib/OpenNI2/Drivers"
-)
-file(GLOB_RECURSE _bundled_openni_driver_dirs LIST_DIRECTORIES TRUE
-  "${OPENNI2_BUNDLE_ROOT}/*/OpenNI2/Drivers"
-  "${OPENNI2_BUNDLE_ROOT}/*/Redist/OpenNI2/Drivers"
-)
-list(APPEND _openni_driver_dirs ${_bundled_openni_driver_dirs})
-foreach(_driver_dir IN LISTS _openni_driver_dirs)
-  if(IS_DIRECTORY "${_driver_dir}")
-    get_filename_component(_openni2_dir "${_driver_dir}" DIRECTORY)
-    get_filename_component(OPENNI2_REDIST_DIR "${_openni2_dir}" DIRECTORY)
-    break()
+if(DEFINED ENV{OPENNI2_REDIST} AND EXISTS "$ENV{OPENNI2_REDIST}/OpenNI2/Drivers")
+  set(OPENNI2_REDIST_DIR "$ENV{OPENNI2_REDIST}")
+endif()
+find_program(OPENNI2_FIND_EXECUTABLE NAMES find)
+if(NOT OPENNI2_REDIST_DIR AND OPENNI2_FIND_EXECUTABLE)
+  execute_process(
+    COMMAND "${OPENNI2_FIND_EXECUTABLE}"
+      "${OPENNI2_BUNDLE_ROOT}" /usr/lib /usr/local/lib /usr/lib/aarch64-linux-gnu
+      -type d -path "*/OpenNI2/Drivers"
+    OUTPUT_VARIABLE _openni_driver_dirs
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+  if(_openni_driver_dirs)
+    string(REPLACE "\n" ";" _openni_driver_dirs "${_openni_driver_dirs}")
+    foreach(_driver_dir IN LISTS _openni_driver_dirs)
+      if(IS_DIRECTORY "${_driver_dir}")
+        get_filename_component(_openni2_dir "${_driver_dir}" DIRECTORY)
+        get_filename_component(OPENNI2_REDIST_DIR "${_openni2_dir}" DIRECTORY)
+        break()
+      endif()
+    endforeach()
   endif()
-endforeach()
+endif()
 
 if(NOT OPENNI2_REDIST_DIR)
-  message(WARNING "OpenNI2/Drivers directory not found during configure; the node may need OPENNI2_REDIST set at runtime.")
+  message(WARNING "OpenNI2/Drivers directory not found during configure. The node will rely on OPENNI2_REDIST or the OpenNI default plugin path at runtime.")
 endif()
 
 add_executable(astra_camera_node src/astra_camera_node.cpp)
