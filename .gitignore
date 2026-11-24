@@ -21,3 +21,9 @@ htmlcov/
 
 
 camera/test_img/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
