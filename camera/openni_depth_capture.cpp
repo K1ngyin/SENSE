@@ -65,6 +65,11 @@ int main(int argc, char** argv) {
                 std::cerr << "Could not create depth stream: "
                           << openni::OpenNI::getExtendedError() << "\n";
                 exit_code = 1;
+            } else if (depth_stream.setMirroringEnabled(false) !=
+                       openni::STATUS_OK) {
+                std::cerr << "Could not disable depth stream mirroring: "
+                          << openni::OpenNI::getExtendedError() << "\n";
+                exit_code = 1;
             } else if (depth_stream.start() != openni::STATUS_OK) {
                 std::cerr << "Could not start depth stream: "
                           << openni::OpenNI::getExtendedError() << "\n";
