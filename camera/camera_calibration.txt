@@ -1,0 +1,24 @@
+Orbbec camera calibration
+device_name = Astra
+vendor = Orbbec
+uri = 2bc5/060f@1/4
+usb_vendor_id = 0x2bc5
+usb_product_id = 0x60f
+property_data_size_bytes = 120
+
+# Intrinsic arrays are [fx, fy, cx, cy].
+# Distortion arrays are [k1, k2, p1, p2, k3].
+depth_ir_intrinsics_l = [577.483825684, 577.483825684, 319.892303467, 230.340896606]
+rgb_intrinsics_r = [544.159606934, 544.159606934, 319.315093994, 231.345520020]
+depth_ir_distortion_l = [-0.092761658, 0.137167618, -0.004514716, 0.007484818, -0.007775190]
+rgb_distortion_r = [0.123432681, -0.221229792, -0.004175027, 0.006890988, 0.035090718]
+
+# Raw SDK extrinsic r2l (right camera to left camera).
+# Rotation is row-major; translation units are SDK-defined.
+r2l_R_row_major = [0.999922454, -0.012024828, 0.003240474, 0.012030018, 0.999926388, -0.001586653, -0.003221157, 0.001625513, 0.999993503]
+r2l_t_sdk_units = [-25.045146942, -0.469894558, -3.620963097]
+
+# Derived from r2l; assumes left=Depth/IR and right=RGB.
+# Transform convention: point_rgb = R_depth_to_rgb * point_depth + t_depth_to_rgb
+depth_to_rgb_R_row_major = [0.999922454, 0.012030018, -0.003221157, -0.012024828, 0.999926388, 0.001625513, 0.003240474, -0.001586653, 0.999993503]
+depth_to_rgb_t_sdk_units = [25.037195206, 0.174582317, 3.701352119]
