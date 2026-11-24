@@ -1,0 +1,23 @@
+astra_camera_node:
+  ros__parameters:
+    video_device: "/dev/video0"
+    width: 640
+    height: 480
+    fps: 30.0
+    rgb_format: "MJPG"
+    depth_to_color: true
+    depth_mirror: false
+    sync_tolerance_ms: 60.0
+
+    color_frame_id: "camera_color_optical_frame"
+    depth_frame_id: "camera_depth_optical_frame"
+
+    color_topic: "/camera/color/image_raw"
+    color_info_topic: "/camera/color/camera_info"
+    depth_topic: "/camera/depth/image_raw"
+    depth_info_topic: "/camera/depth/camera_info"
+    aligned_depth_topic: "/camera/aligned_depth_to_color/image_raw"
+    aligned_depth_info_topic: "/camera/aligned_depth_to_color/camera_info"
+
+    color_camera_info_url: ""
+    depth_camera_info_url: ""
