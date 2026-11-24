@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SDK_URL='https://dl.orbbec3d.com/dist/openni2/v2.3.0.86-beta6/Orbbec_OpenNI_v2.3.0.86-beta6_linux_release.zip'
 ARM64_ZIP_NAME='OpenNI_2.3.0.86_202210111155_4c8f5aa4_beta6_a311d_arm64.zip'
+PYPI_INDEX_URL='https://pypi.tuna.tsinghua.edu.cn/simple'
 
 die() {
     echo "错误：$*" >&2
@@ -50,6 +51,7 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     python3 -m venv "$VENV_DIR"
 fi
 echo "安装 Python 依赖..."
+"$VENV_DIR/bin/python" -m pip config --site set global.index-url "$PYPI_INDEX_URL"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install -r "$PROJECT_DIR/requirements.txt"
 
