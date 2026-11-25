@@ -50,6 +50,16 @@ python -m cloud_agent "探索会议室，找到会议桌并到桌旁"
 
 先通过 Tailscale 确认板子在线并核验 SSH 主机指纹，使用本人获准的 SSH 登录方式。以下探针在 SSH 会话中用板上已有的 python3 从标准输入执行，退出即结束。它只读取主机名、架构、内核、采样时间及 ROS 环境文件是否存在。定位和安全监督返回 null。此步骤能验证基础请求往返，ROS 话题状态和运动能力要由正式 Gateway 证明。
 
+本组于 2026-11-25 14:27（北京时间）完成一次实机只读验收。云端侧程序运行在 Windows 电脑，使用结构化 state 意图。香橙派返回 SUCCESS，请求编号 7f5fb451-c6b7-46ab-98fc-e772a693914e，系统 Ubuntu 22.04.5 LTS、架构 aarch64。探针确认 Humble 环境文件以及 chassis_driver、astra_camera_driver 两个源码目录存在。定位有效性与安全就绪状态均为 null。本次验收范围是端云通信与状态读取，后续另验模型服务和车端运动闭环。
+
+单窗口验收可以在 Windows PowerShell 的仓库根目录运行下面一条命令。它会启动本机临时 Agent，打开经过主机密钥校验的 SSH 连接，自动发起 get_robot_state，在本机保存带 request_id 的真实回执。文件名须是尚未使用的路径；把 SSH 目标换成组内核验的值。
+
+```powershell
+python -m cloud_agent.readonly_link 用户名@板子的Tailscale地址 --check --output ../board-check.json
+```
+
+要展示自己输入指令的过程，可按以下步骤打开两个窗口。
+
 1. 在 Windows PowerShell 的仓库根目录运行下面三行。第二行打开继承临时令牌的窗口 B，当前窗口 A 留给 Agent。
 
    ```powershell
