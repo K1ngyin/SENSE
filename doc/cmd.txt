@@ -1,0 +1,16 @@
+ssh ucas@100.84.21.48
+密码：123456
+
+## 远程仓库输入这个命令
+git init
+git config receive.denyCurrentBranch updateInstead
+
+## 本地配置远程仓库
+git remote add server ssh://ucas@100.84.21.48/home/student/repo.git(替换为你自己的远程仓库地址)
+
+git push server 本地分支名
+
+## 远程仓库同步命令
+git reset --hard
+
+sudo poweroff
