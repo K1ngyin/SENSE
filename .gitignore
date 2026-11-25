@@ -1,4 +1,4 @@
-doc/
+doc/tmp/
 
 # ROS 2 / colcon workspace output
 /ros2_ws/build/
